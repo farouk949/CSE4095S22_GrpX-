@@ -1,145 +1,170 @@
-import os
-import re
+import numpy as np
+from scipy._lib._tmpdirs import in_dir
+from sklearn import svm, discriminant_analysis, dummy
+from sklearn.linear_model import LogisticRegression, Perceptron
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, RandomForestRegressor, GradientBoostingRegressor, _gb_losses
+from sklearn.naive_bayes import BernoulliNB, GaussianNB, MultinomialNB, ComplementNB
+from sklearn.linear_model import LinearRegression, Lasso, Ridge
+from sklearn.neural_network import MLPClassifier, MLPRegressor
+from sklearn.svm import SVR
+import json
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
 import string
-import gensim as gensim
+import glob
 import nltk
-from nltk.collocations import *
-import pyLDAvis as pyLDAvis
-from gensim import corpora
 from nltk.collocations import BigramCollocationFinder
 from nltk.metrics import BigramAssocMeasures
 from nltk.collocations import TrigramCollocationFinder
 from nltk.metrics import TrigramAssocMeasures
-from nltk.tokenize import word_tokenize, sent_tokenize
-from nltk.collocations import *
-from nltk.stem import WordNetLemmatizer
-from nltk import ngrams
+from nltk import word_tokenize
 from nltk import FreqDist
-from nltk.corpus import webtext
+from collections import defaultdict
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, LSTM, Embedding,Bidirectional
+import tensorflow
+from keras.callbacks import EarlyStopping, ModelCheckpoint
+from tensorflow.compat.v1.keras.layers import CuDNNLSTM,CuDNNGRU
+from tensorflow.keras.layers import Dropout
 from nltk.corpus import stopwords
-import json
+from sklearn.metrics import adjusted_rand_score
+import pandas as pd
+import re
+import os
+import numpy as np
+import warnings
+import seaborn as sns
+import matplotlib.pyplot as plt
+import gensim
+import gensim.downloader as api
+
+for dirname, _, filenames in os.walk('/dataset2021-01/input'):
+    for filename in filenames:
+        print(os.path.join(dirname, filename))
+
+def load_data(file):
+    with open(file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        return(data)
+
+def write_data(file, data):
+    with open(file, "w", encoding="utf-8") as f:
+        json.dumb(data, f, indent=4)
 
 
+def remove_stops(text, stops):
+    text = re.sub(r"AC\/\d{1,4}\/\d{1,4}","",text)
+    words = text.split()
+    final = []
+    for word in words:
+        if word not in stops:
+            final.append(word)
+    final = " ".join(final)
+    final = final.translate(str.maketrans("", "", string.punctuation))
+    final = "".join([i for i in final if not i.isdigit()])
+    while "  " in final:
+        final = final.replace("  ", " ")
 
+def clean_docs(docs):
+    stops = stopwords.words("english") + stopwords.words('turkish')
+    months = load_data("months")
 
-with open("data2.json", "r") as f:
-    data2 = json.load(f)
+    stops = stops + months
+    final = []
+    for doc in docs:
+        clean_doc = remove_stops(doc, stops)
+        final.append(clean_doc)
+        return(final)
 
-#bygrams
-text = "Eşe karşı basit yaralama suçundan sanık ...'ın, 5237 sayılı Türk Ceza Kanunu'nun 86/2, 86/3-a, 62/1 ve 52/2. maddeleri uyarınca 3.000,00 Türk Lirası adlî para cezası ile cezalandırılmasına, 5271 sayılı Ceza Muhakemesi Kanunu'nun 231/5. maddesi gereğince hükmün açıklanmasının geri bırakılmasına dair Kırıkkale 4. Asliye Ceza Mahkemesinin 07.11.2019 tarihli ve 2018/535 Esas, 2019/948 Karar sayılı kararına karşı yapılan itirazın kabulü ile anılan kararın kaldırılmasına ilişkin mercii Kırıkkale 1. Ağır Ceza Mahkemesinin 05.02.2020 tarihli ve 2020/139 değişik iş sayılı kararına karşı Adalet Bakanlığının 17.11.2020 tarihli ve 2020/9153 sayılı yazısıyla kanun yararına bozma isteminde bulunulduğundan bu işe ait dava dosyası Yargıtay Cumhuriyet Başsavcılığının 15.12.2020 tarihli ve 2020/105078 sayılı tebliğnamesi ile Dairemize gönderilmekle incelendi.  Mezkur ihbarnamede;  5271 sayılı Kanun’un 231/8. maddesinde yer alan “Denetim süresi içinde, kişi hakkında kasıtlı bir suç nedeniyle bir daha hükmün açıklanmasının geri bırakılmasına karar verilemez.” şeklindeki düzenleme gereğince, denetim süresinde bir kez daha suç işlenmesi halinde ikinci suçtan dolayı kurulan hükmün tekrar açıklanmasının geri bırakılamayacağı nazara alındığında, sanık hakkında 06.06.2017 tarihinde işlemiş olduğu suçtan dolayı Kırıkkale 3. Asliye Ceza Mahkemesinin 10.05.2018 tarihli ve 2017/523 Esas, 2018/315 sayılı kararıyla verilen hükmün açıklanmasının geri bırakılmasına dair kararın 08.10.2018 tarihinde kesinleştiği ve denetim süresinin de bu tarih itibariyle başladığı, yargılama konusu suçun ise önceki kararın kesinleşmesinden önce 21.05.2018 tarihinde işlendiği cihetle, denetim süresi içerisinde işlenmiş bir suçtan bahsedilemeyeceği gözetilmeden, itirazın reddi yerine yazılı şekilde kabulüne karar verilmesinde isabet görülmediğinden bahisle, 5271 sayılı CMK'nin 309. maddesi gereğince anılan kararların bozulması lüzumunun ihbar olunduğu anlaşıldı.  Gereği görüşülüp düşünüldü:  5271 sayılı CMK’nin 231. maddesinde düzenlenen “hükmün açıklanmasının geri bırakılması” müessesesinin uygulanabilmesi için öncelikle,  - Sanık hakkında kurulan mahkûmiyet hükmünde, hükmolunan cezanın iki yıl veya daha az süreli hapis veya adli para cezasından ibaret olması,  - Suçun CMK’nın 231. maddesinin 14. fıkrasında yazılı suçlardan olmaması,  - Sanığın daha önce kasıtlı bir suçtan mahkûm olmamış bulunması,  - Sanığın hükmün açıklanmasının geri bırakılmasına itirazının bulunmaması,  Suçun işlenmesiyle mağdurun veya kamunun uğradığı zararın, aynen iade, suçtan önceki hale getirme veya tamamen giderilmesine ilişkin koşulların birlikte gerçekleşmesi gerekmektedir.  Ayrıca, bahsi geçen maddenin 8. fıkrasında; \"Hükmün açıklanmasının geri bırakılması kararının verilmesi halinde sanık, beş yıl süreyle denetim süresine tâbi tutulur. (Ek cümle: 18/06/2014-6545 S.K./72. md) Denetim süresi içinde, kişi hakkında kasıtlı bir suç nedeniyle bir daha hükmün açıklanmasının geri bırakılmasına karar verilemez.” hükmü yer almaktadır.  CMK’nin 231/8. maddesine ilişkin 6545 sayılı Kanun’un 72. maddesinin gerekçesinde de bu durum; “Maddeyle, Ceza Muhakemesi Kanunu'nun 231. maddesinin sekizinci fıkrasında değişiklik yapmak suretiyle, hükmün açıklanmasının geri bırakılmasına karar verilmesi halinde sanığın tabi tutulacağı denetim süresi içinde sanık hakkında bir daha hükmün açıklanmasının geri bırakılmasına karar verilemeyeceği düzenlenmektedir. Söz konusu maddenin uygulanmasında, hükmün açıklanmasının geri bırakılması kararı verilen sanıklar hakkında işledikleri diğer suçlardan dolayı da birçok kez hükmün açıklanmasının geri bırakılması kararı verildiği görülmektedir. Yapılması öngörülen değişiklikle, bu uygulamaya son verilmesi ve denetim süresi içinde sanık hakkında bir daha hükmün açıklanmasının geri bırakılmasına karar verilememesi amaçlanmaktadır. Kişinin işlediği ikinci suçun denetim süresi içinde işlenip işlenmediğinin önemi bulunmamaktadır. Daha önceden işlenen suçlar bakımından da bu yasak uygulanacaktır.” şeklinde ifade edilmiştir.  Buna göre 6545 sayılı Kanun'un yürürlüğe girdiği tarihten sonra işlenen suçlar için, hakkında daha önce hükmün açıklanmasının geri bırakılması kararı bulunan sanıklarla ilgili bir daha hükmün açıklanmasının geri bırakılması kararı verilemeyecektir.  İnceleme konusu somut olayda; mahkemece sanık ...’ın kasten basit yaralama suçundan adli para cezası ile cezalandırılmasına ve hükmün açıklanmasının geri bırakılmasına karar verilmiştir. Bu karara karşı yapılan itiraz merciince kabul edilerek sanık hakkındaki hükmün açıklanmasının geri bırakılmasına dair karar kaldırılmıştır.  Sanığın adli sicil kaydında yer alan kasten basit yaralama suçundan verilen Kırıkkale 3. Asliye Ceza Mahkemesinin 10.05.2018 tarihli ve 2017/523 Esas, 2018/315 Karar sayılı hükmün açıklanmasının geri bırakılması kararının 08.10.2018 tarihinde kesinleşmesi üzerine bu suç yönünden sanık hakkında denetim süresi başlamıştır. Böylece CMK’nin 231/8. maddesindeki; “Denetim süresi içinde, kişi hakkında kasıtlı bir suç nedeniyle bir daha hükmün açıklanmasının geri bırakılmasına karar verilemez” şeklindeki düzenleme gereğince inceleme konusu kasten basit yaralama suçu yönünden sanık hakkında hükmün açıklanmasının geri bırakılmasına karar verilemeyecektir. Sanığın inceleme konusu kasten basit yaralama suçunu adli sicil kaydındaki diğer kasten basit yaralama suçundan verilen hükmün açıklanmasının geri bırakılması kararının kesinleşme tarihinden önceki bir tarihte gerçekleştirmiş olmasının önemi bulunmamaktadır. Zira sanığın bu suçtan verilen hükmün açıklanmasının geri bırakılması kararının denetim süresi 08.10.2018 tarihinde başlamış ve incelenen kasten basit yaralama suçundan mahkemece 07.11.2019 tarihinde karar verilmiştir. 08.10.2018 tarihinden sonra sanık hakkında kasıtlı bir suçtan yeni bir hükmün açıklanmasının geri bırakılmasına karar verilmesi mümkün bulunmamaktadır.  Böylece, sanık hakkında mahkemece hükmün açıklanmasının geri bırakılmasına dair karara yönelik itirazın merciince kabul edilerek kaldırılmasına karar verilmesinde isabetsizlik görülmemiştir.  Açıklanan bu nedenlerle, Adalet Bakanlığının kanun yararına bozma isteyen yazısına dayanan tebliğnamede ileri sürülen düşünce yerinde görülmeyerek kanun yararına bozma talebinin REDDİNE, dosyanın mahalline gönderilmek üzere Yargıtay Cumhuriyet Başsavcılığına TEVDİİNE, 04.01.2021 gününde oybirliği ile karar verildi. (¤¤)"
-wordlist = text.split()
-bigram_fd = nltk.FreqDist(nltk.bigrams(wordlist))
-bigram_measures = nltk.collocations.BigramAssocMeasures()
-words = [w.lower() for w in text]
-bcf = BigramCollocationFinder.from_words(words)
-bcf = BigramCollocationFinder.from_words(text)
-Tokens = nltk.word_tokenize(text)
-output = tuple(nltk.bigrams(Tokens))
+final_stopwords_list = stopwords.words('english') + stopwords.words('turkish')
 
-finder = BigramCollocationFinder.from_words(text)
-finder.nbest(BigramAssocMeasures.likelihood_ratio, 10)
-finder = BigramCollocationFinder.from_words(nltk.corpus.brown.tagged_words('ca01', tagset='universal'))
-finder = BigramCollocationFinder.from_words(Tokens)
+descriptions = load_data("dataset2021-01/1.json")["ictihat"]
+cleaned_docs = clean_docs(descriptions)
+print (descriptions)
 
+sns.set()
+sns.countplot(descriptions)
+print(plt.show())
 
-filter_stops = lambda w: len(w) < 3 or w in stop_words
-bcf.apply_word_filter(filter_stops)
-word_in_text = word_tokenize(text)
-stop_words = set(stopwords.words("turkish"))
-filtered_list = []
-for word in word_in_text:
-    if word.casefold() not in stop_words:
-        filtered_list.append(word)
-word_filter = lambda *w: 'criminal' not in w
-filtered_list = [word for word in word_in_text if word.casefold() not in stop_words]
-finder = BigramCollocationFinder.from_words(filtered_list)
-finder.apply_freq_filter(3)
-finder.apply_ngram_filter(word_filter)
-bcf.nbest(BigramAssocMeasures.likelihood_ratio, 4)
-text_finder = BigramCollocationFinder.from_words(text)
-text_scored = text_finder.score_ngrams(bigram_measures.raw_freq)
-word_in_text = word_tokenize(text)
-lemmatizer = WordNetLemmatizer()
-nltk.pos_tag(word_in_text)
-sent_tokenize(text)
-lotr_pos_tags = nltk.pos_tag(word_in_text)
-grammar = "NP: {<DT>?<JJ>*<NN>}"
-chunk_parser = nltk.RegexpParser(grammar)
-tree = chunk_parser.parse(lotr_pos_tags)
-#tree.draw()
-frequency_distribution = FreqDist(text)
-frequency_distribution.most_common(15)
-frequency_distribution = FreqDist(filtered_list)
+EMBEDDING_DIM = 100 # this means the embedding layer will create  a vector in 100 dimension
+model = Sequential()
+model.add(Embedding(input_dim = num_words,# the whole vocabulary size
+                          output_dim = EMBEDDING_DIM, # vector space dimension
+                          input_length= X_train_pad.shape[1] # max_len of text sequence
+                          ))
+model.add(Dropout(0.2))
+model.add(Bidirectional(CuDNNLSTM(100,return_sequences=True)))
+model.add(Dropout(0.2))
+model.add(Bidirectional(CuDNNLSTM(200,return_sequences=True)))
+model.add(Dropout(0.2))
+model.add(Bidirectional(CuDNNLSTM(100,return_sequences=False)))
+model.add(Dense(1, activation = 'sigmoid'))
+model.compile(loss = 'binary_crossentropy', optimizer = 'adam',metrics = 'accuracy')
 
-def cleaning(text):
-    try:
-        text = text.encode('utf-8','ignore').decode('utf-8')
-    except:
-        text = text.encode('ascii','ignore')
-        text = re.sub('\\S+@\\S+|@\\S+', '', text)
-        text = re.sub('\\n', '', text)
-        text = re.sub('\\s', '', text)
-        text = re.sub('[-|#()"":/*"]', '', text)
-        #print(text)
-    remove = string.punctuation
-    remove = remove.replace(",", "")
-    pattern = r"[{}]".format(remove)
-    re.sub(pattern, "", text)
-    text = re.sub('(.)\\1\\1+', '\\1', text)
-    text = text.replace(",", " ,")
-    return text
+es = EarlyStopping(monitor = 'val_loss', mode = 'min', verbose = 1, patience = 10)
+mc = ModelCheckpoint('./model.h5', monitor = 'val_accuracy', mode = 'max', verbose = 1, save_best_only = True)
 
-lemmatized_words = [lemmatizer.lemmatize(word) for word in text]
-new_text = nltk.Text(lemmatized_words)
-new_text.collocations()
-#sorted(bigram for bigram, score in scored)
-bigram_fd.most_common()
-word_in_text
-finder.nbest(bigram_measures.pmi, 5)
-#print(output)
-print(Tokens)
-print(bigram_fd.most_common(200), file=open("bigramsPOSFiltering.txt", "a"))
-print(filtered_list, file=open("bigramsPOSFiltering.txt", "a"))
-print(nltk.pos_tag(word_in_text), file=open("bigramsPOSFiltering.txt", "a"))
-print(frequency_distribution.most_common(200))
-print(finder.nbest(bigram_measures.likelihood_ratio, 10))
-print(text_scored, file=open("bigramsPOSFiltering.txt", "a"))
+history_embedding = model.fit(X_train_pad,y_train, epochs = 35, batch_size = 120, validation_data=(X_test_pad, y_test),verbose = 1, callbacks= [es, mc]  )
 
+plt.plot(history_embedding.history['accuracy'],c='b',label='train accuracy')
+plt.plot(history_embedding.history['val_accuracy'],c='r',label='validation accuracy')
+plt.legend(loc='lower right')
+plt.show()
 
-#Trigrams
-text = "Eşe karşı basit yaralama suçundan sanık ...'ın, 5237 sayılı Türk Ceza Kanunu'nun 86/2, 86/3-a, 62/1 ve 52/2. maddeleri uyarınca 3.000,00 Türk Lirası adlî para cezası ile cezalandırılmasına, 5271 sayılı Ceza Muhakemesi Kanunu'nun 231/5. maddesi gereğince hükmün açıklanmasının geri bırakılmasına dair Kırıkkale 4. Asliye Ceza Mahkemesinin 07.11.2019 tarihli ve 2018/535 Esas, 2019/948 Karar sayılı kararına karşı yapılan itirazın kabulü ile anılan kararın kaldırılmasına ilişkin mercii Kırıkkale 1. Ağır Ceza Mahkemesinin 05.02.2020 tarihli ve 2020/139 değişik iş sayılı kararına karşı Adalet Bakanlığının 17.11.2020 tarihli ve 2020/9153 sayılı yazısıyla kanun yararına bozma isteminde bulunulduğundan bu işe ait dava dosyası Yargıtay Cumhuriyet Başsavcılığının 15.12.2020 tarihli ve 2020/105078 sayılı tebliğnamesi ile Dairemize gönderilmekle incelendi.  Mezkur ihbarnamede;  5271 sayılı Kanun’un 231/8. maddesinde yer alan “Denetim süresi içinde, kişi hakkında kasıtlı bir suç nedeniyle bir daha hükmün açıklanmasının geri bırakılmasına karar verilemez.” şeklindeki düzenleme gereğince, denetim süresinde bir kez daha suç işlenmesi halinde ikinci suçtan dolayı kurulan hükmün tekrar açıklanmasının geri bırakılamayacağı nazara alındığında, sanık hakkında 06.06.2017 tarihinde işlemiş olduğu suçtan dolayı Kırıkkale 3. Asliye Ceza Mahkemesinin 10.05.2018 tarihli ve 2017/523 Esas, 2018/315 sayılı kararıyla verilen hükmün açıklanmasının geri bırakılmasına dair kararın 08.10.2018 tarihinde kesinleştiği ve denetim süresinin de bu tarih itibariyle başladığı, yargılama konusu suçun ise önceki kararın kesinleşmesinden önce 21.05.2018 tarihinde işlendiği cihetle, denetim süresi içerisinde işlenmiş bir suçtan bahsedilemeyeceği gözetilmeden, itirazın reddi yerine yazılı şekilde kabulüne karar verilmesinde isabet görülmediğinden bahisle, 5271 sayılı CMK'nin 309. maddesi gereğince anılan kararların bozulması lüzumunun ihbar olunduğu anlaşıldı.  Gereği görüşülüp düşünüldü:  5271 sayılı CMK’nin 231. maddesinde düzenlenen “hükmün açıklanmasının geri bırakılması” müessesesinin uygulanabilmesi için öncelikle,  - Sanık hakkında kurulan mahkûmiyet hükmünde, hükmolunan cezanın iki yıl veya daha az süreli hapis veya adli para cezasından ibaret olması,  - Suçun CMK’nın 231. maddesinin 14. fıkrasında yazılı suçlardan olmaması,  - Sanığın daha önce kasıtlı bir suçtan mahkûm olmamış bulunması,  - Sanığın hükmün açıklanmasının geri bırakılmasına itirazının bulunmaması,  Suçun işlenmesiyle mağdurun veya kamunun uğradığı zararın, aynen iade, suçtan önceki hale getirme veya tamamen giderilmesine ilişkin koşulların birlikte gerçekleşmesi gerekmektedir.  Ayrıca, bahsi geçen maddenin 8. fıkrasında; \"Hükmün açıklanmasının geri bırakılması kararının verilmesi halinde sanık, beş yıl süreyle denetim süresine tâbi tutulur. (Ek cümle: 18/06/2014-6545 S.K./72. md) Denetim süresi içinde, kişi hakkında kasıtlı bir suç nedeniyle bir daha hükmün açıklanmasının geri bırakılmasına karar verilemez.” hükmü yer almaktadır.  CMK’nin 231/8. maddesine ilişkin 6545 sayılı Kanun’un 72. maddesinin gerekçesinde de bu durum; “Maddeyle, Ceza Muhakemesi Kanunu'nun 231. maddesinin sekizinci fıkrasında değişiklik yapmak suretiyle, hükmün açıklanmasının geri bırakılmasına karar verilmesi halinde sanığın tabi tutulacağı denetim süresi içinde sanık hakkında bir daha hükmün açıklanmasının geri bırakılmasına karar verilemeyeceği düzenlenmektedir. Söz konusu maddenin uygulanmasında, hükmün açıklanmasının geri bırakılması kararı verilen sanıklar hakkında işledikleri diğer suçlardan dolayı da birçok kez hükmün açıklanmasının geri bırakılması kararı verildiği görülmektedir. Yapılması öngörülen değişiklikle, bu uygulamaya son verilmesi ve denetim süresi içinde sanık hakkında bir daha hükmün açıklanmasının geri bırakılmasına karar verilememesi amaçlanmaktadır. Kişinin işlediği ikinci suçun denetim süresi içinde işlenip işlenmediğinin önemi bulunmamaktadır. Daha önceden işlenen suçlar bakımından da bu yasak uygulanacaktır.” şeklinde ifade edilmiştir.  Buna göre 6545 sayılı Kanun'un yürürlüğe girdiği tarihten sonra işlenen suçlar için, hakkında daha önce hükmün açıklanmasının geri bırakılması kararı bulunan sanıklarla ilgili bir daha hükmün açıklanmasının geri bırakılması kararı verilemeyecektir.  İnceleme konusu somut olayda; mahkemece sanık ...’ın kasten basit yaralama suçundan adli para cezası ile cezalandırılmasına ve hükmün açıklanmasının geri bırakılmasına karar verilmiştir. Bu karara karşı yapılan itiraz merciince kabul edilerek sanık hakkındaki hükmün açıklanmasının geri bırakılmasına dair karar kaldırılmıştır.  Sanığın adli sicil kaydında yer alan kasten basit yaralama suçundan verilen Kırıkkale 3. Asliye Ceza Mahkemesinin 10.05.2018 tarihli ve 2017/523 Esas, 2018/315 Karar sayılı hükmün açıklanmasının geri bırakılması kararının 08.10.2018 tarihinde kesinleşmesi üzerine bu suç yönünden sanık hakkında denetim süresi başlamıştır. Böylece CMK’nin 231/8. maddesindeki; “Denetim süresi içinde, kişi hakkında kasıtlı bir suç nedeniyle bir daha hükmün açıklanmasının geri bırakılmasına karar verilemez” şeklindeki düzenleme gereğince inceleme konusu kasten basit yaralama suçu yönünden sanık hakkında hükmün açıklanmasının geri bırakılmasına karar verilemeyecektir. Sanığın inceleme konusu kasten basit yaralama suçunu adli sicil kaydındaki diğer kasten basit yaralama suçundan verilen hükmün açıklanmasının geri bırakılması kararının kesinleşme tarihinden önceki bir tarihte gerçekleştirmiş olmasının önemi bulunmamaktadır. Zira sanığın bu suçtan verilen hükmün açıklanmasının geri bırakılması kararının denetim süresi 08.10.2018 tarihinde başlamış ve incelenen kasten basit yaralama suçundan mahkemece 07.11.2019 tarihinde karar verilmiştir. 08.10.2018 tarihinden sonra sanık hakkında kasıtlı bir suçtan yeni bir hükmün açıklanmasının geri bırakılmasına karar verilmesi mümkün bulunmamaktadır.  Böylece, sanık hakkında mahkemece hükmün açıklanmasının geri bırakılmasına dair karara yönelik itirazın merciince kabul edilerek kaldırılmasına karar verilmesinde isabetsizlik görülmemiştir.  Açıklanan bu nedenlerle, Adalet Bakanlığının kanun yararına bozma isteyen yazısına dayanan tebliğnamede ileri sürülen düşünce yerinde görülmeyerek kanun yararına bozma talebinin REDDİNE, dosyanın mahalline gönderilmek üzere Yargıtay Cumhuriyet Başsavcılığına TEVDİİNE, 04.01.2021 gününde oybirliği ile karar verildi. (¤¤)"
-wordlist = text.split()
-trigram_fd = nltk.FreqDist(nltk.trigrams(wordlist))
-trigram_measures = nltk.collocations.TrigramAssocMeasures()
-trigram_fd.most_common()
-words = [w.lower() for w in text]
-finder = TrigramCollocationFinder.from_words(text)
-finder.nbest(TrigramAssocMeasures.likelihood_ratio, 10)
-finder = TrigramCollocationFinder.from_words(text)
-finder = TrigramCollocationFinder.from_words(filtered_list)
-Tokens = nltk.word_tokenize(text)
-output = tuple(nltk.trigrams(Tokens))
-trigram_measures = nltk.collocations.TrigramAssocMeasures()
-Tokens = nltk.word_tokenize(text)
-finder = TrigramCollocationFinder.from_words(text)
-text_finder = TrigramCollocationFinder.from_words(text)
-text_scor = text_finder.score_ngrams(trigram_measures.raw_freq)
-finder.nbest(TrigramAssocMeasures.likelihood_ratio, 10)
-output = tuple(nltk.trigrams(Tokens))
-print(output)
-print(trigram_fd.most_common(200), file=open("trigramsPMI.txt", "a"))
-print(finder.nbest(TrigramAssocMeasures.likelihood_ratio, 10))
-print(text_scor)
+glove_gensim  = api.load('glove-wiki-gigaword-100') # this would download vector with 100 dimension
 
+vector_size = 100
+gensim_weight_matrix = np.zeros((num_words ,vector_size))
+gensim_weight_matrix.shape
 
+for word, index in tokenizer.word_index.items():
+    if index < num_words: # since index starts with zero
+        if word in glove_gensim.wv.vocab:
+            gensim_weight_matrix[index] = glove_gensim[word]
+        else:
+            gensim_weight_matrix[index] = np.zeros(100)
 
+model_gensim.summary()
 
+#print (cleaned_docs)
 
+vectorizer = TfidfVectorizer(lowercase=True, max_features=100, max_df=0.8, min_df=5,
+                             ngram_range=(1,3), stop_words=final_stopwords_list)
 
+vectors = vectorizer.fit_transform(descriptions)
+feature_names = vectorizer.get_feature_names_out()
+#dense = vectors.todense()
+#denselist = dense.tolist()
 
+#all_keywords = []
+#for description in denselist:
+    #x=0
+    #keywords = []
+    #for word in description:
+        #if word > 0:
+            #keywords.append(feature_names[x])
+            #x=x+1
+            #all_keywords.append(keywords)
 
+#print(descriptions[0])
+#print(all_keywords[0])
 
+#true_k = 20
 
+#model = KMeans(n_clusters=true_k, init="k-means++", max_iter=100, n_init=1)
 
+#model.fit(vectors)
 
+#order_centroids = model.cluster_centers_.argsort()[:, ::-1]
+#terms = vectorizer.get_feature_names_out()
 
+with open ("testresults.txt", "w", encoding="utf-8") as f:
+    for i in range(true_k):
+        f.write(f"Cluster {i}")
+        f.write("\n")
+        for ind in order_centroids[i, :10]:
+            f.write (' %s' % terms[ind],)
+            f.write("\n")
+        f.write("\n")
+        f.write("\n")
